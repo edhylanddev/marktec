@@ -4,11 +4,56 @@ import numpy as np
 from datetime import datetime, timedelta
 import time
 import logging
+import random 
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Helper function for handling rate limiting
+def fetch_with_retry(func, *args, max_attempts=5, initial_delay=1, **kwargs):
+    """
+    Execute a function with retry logic and exponential backoff
+    
+    Args:
+        func: The function to execute
+        max_attempts: Maximum number of retry attempts
+        initial_delay: Initial delay between retries in seconds
+        *args, **kwargs: Arguments to pass to the function
+        
+    Returns:
+        The result of the function call
+    """
+    delay = initial_delay
+    last_exception = None
+    attemp_count = 0
+    
+    for attempt_count in range(max_attempts):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            last_exception = e
+            # Check if it's a rate limit error (429)
+            if "429" in str(e) or "Too Many Requests" in str(e):
+                # Add jitter to avoid synchronized retries
+                jitter = random.uniform(0, 0.5)
+                sleep_time = delay + jitter
+                logger.warning(f"Rate limit exceeded. Retrying in {sleep_time:.2f} seconds (attempt {attempt_count + 1}/{max_attempts})")
+                time.sleep(sleep_time)
+                # Exponential backoff
+                delay *= 2
+            else:
+                # If it's not a rate limit error, don't retry
+                break
+    
+    # If we've exhausted all attempts or hit a non-rate limit error
+    if last_exception is not None:
+        logger.error(f"Failed after {attempt_count + 1} attempts: {last_exception}")
+        raise last_exception
+    else:
+        logger.error("Function failed without an exception")
+        raise RuntimeError("Function failed for unknown reason")
+        
 # List of popular currency pairs to track
 POPULAR_CURRENCIES = [
     # Major pairs
