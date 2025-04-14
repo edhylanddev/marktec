@@ -4,7 +4,7 @@ import numpy as np
 from datetime import datetime, timedelta
 import time
 import logging
-import random 
+import random
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -26,7 +26,7 @@ def fetch_with_retry(func, *args, max_attempts=5, initial_delay=1, **kwargs):
     """
     delay = initial_delay
     last_exception = None
-    attemp_count = 0
+    attempt_count = 0
     
     for attempt_count in range(max_attempts):
         try:
@@ -48,12 +48,13 @@ def fetch_with_retry(func, *args, max_attempts=5, initial_delay=1, **kwargs):
     
     # If we've exhausted all attempts or hit a non-rate limit error
     if last_exception is not None:
-        logger.error(f"Failed after {attempt_count + 1} attempts: {last_exception}")
+        logger.error(f"Failed after {attempt_count + 1} attempts: {str(last_exception)}")
         raise last_exception
     else:
+        # This should not happen, but just in case
         logger.error("Function failed without an exception")
         raise RuntimeError("Function failed for unknown reason")
-        
+
 # List of popular currency pairs to track
 POPULAR_CURRENCIES = [
     # Major pairs
@@ -95,7 +96,12 @@ def fetch_currency_data(ticker, period="1y", interval="1d"):
     """
     try:
         ticker_yf = yf.Ticker(ticker)
-        df = ticker_yf.history(period=period, interval=interval)
+        
+        # Use the retry mechanism for fetching history
+        def fetch_history():
+            return ticker_yf.history(period=period, interval=interval)
+            
+        df = fetch_with_retry(fetch_history)
         
         if df.empty:
             logger.error(f"No data retrieved for {ticker}")
@@ -126,7 +132,31 @@ def get_currency_info(ticker):
     """
     try:
         ticker_yf = yf.Ticker(ticker)
-        info = ticker_yf.info
+        
+        # Use the retry mechanism for fetching info
+        def fetch_info():
+            return ticker_yf.info
+            
+        try:
+            info = fetch_with_retry(fetch_info)
+        except Exception as e:
+            # If all retries fail, format a basic response with the error
+            logger.error(f"All retries failed for {ticker}: {e}")
+            
+            # Format the currency name for display
+            if '=' in ticker:
+                base_currency = ticker.split('=')[0][:3]
+                quote_currency = ticker.split('=')[0][3:]
+                pair_name = f"{base_currency}/{quote_currency}"
+            else:
+                pair_name = ticker
+                
+            return {
+                'name': pair_name,
+                'symbol': ticker,
+                'error': str(e),
+                'price_change_24h_pct': 0  # Default value for calculations
+            }
         
         # Format the currency name for display
         if '=' in ticker:
@@ -165,7 +195,8 @@ def get_currency_info(ticker):
         return {
             'name': pair_name,
             'symbol': ticker,
-            'error': str(e)
+            'error': str(e),
+            'price_change_24h_pct': 0  # Default value for calculations
         }
 
 def get_currency_top_gainers(threshold=3.0, limit=20):
